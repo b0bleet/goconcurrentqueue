@@ -2,6 +2,7 @@ package goconcurrentqueue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ type FIFO struct {
 	rwmutex     sync.RWMutex
 	lockRWmutex sync.RWMutex
 	isLocked    bool
+	done        chan struct{}
 	// queue for watchers that will wait for next elements (if queue is empty at DequeueOrWaitForNextElement execution )
 	waitForNextElementChan chan chan interface{}
 	// queue to unlock consumers that were locked when queue was empty (during DequeueOrWaitForNextElement execution)
@@ -36,6 +38,12 @@ func (st *FIFO) initialize() {
 	st.slice = make([]interface{}, 0)
 	st.waitForNextElementChan = make(chan chan interface{}, WaitForNextElementChanCapacity)
 	st.unlockDequeueOrWaitForNextElementChan = make(chan struct{}, WaitForNextElementChanCapacity)
+
+	st.done = make(chan struct{})
+}
+
+func (st *FIFO) Close() {
+	close(st.done)
 }
 
 // Enqueue enqueues an element. Returns error if queue is locked.
@@ -159,6 +167,8 @@ func (st *FIFO) DequeueOrWaitForNextElementContext(ctx context.Context) (interfa
 
 					case item := <-waitChan:
 						return item, nil
+					case <-st.done:
+						return nil, errors.New("queue channel closed")
 					case <-ctx.Done():
 						return nil, ctx.Err()
 					}
